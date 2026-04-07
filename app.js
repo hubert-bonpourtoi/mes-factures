@@ -185,12 +185,17 @@ function renderScan() {
   wrap.innerHTML = `
     <div class="page-header"><h1>Scanner une facture</h1></div>
     <div class="scan-zone" id="scan-zone">
-      <input type="file" id="file-input" accept="image/*,application/pdf" capture="environment" style="display:none">
+      <input type="file" id="file-input-camera" accept="image/*" capture="environment" style="display:none">
+      <input type="file" id="file-input-gallery" accept="image/*" style="display:none">
+      <input type="file" id="file-input-pdf" accept="application/pdf,image/*" style="display:none">
       ${iconCamera().outerHTML}
-      <p>Prenez une photo ou sélectionnez une image</p>
+      <p>Prenez une photo ou sélectionnez un fichier</p>
       <div class="scan-btns">
         <button class="btn-primary" id="btn-camera">📷 Appareil photo</button>
         <button class="btn-secondary" id="btn-gallery">🖼 Galerie</button>
+      </div>
+      <div class="scan-btns" style="margin-top:8px">
+        <button class="btn-secondary" id="btn-pdf" style="width:100%">📄 Fichier PDF</button>
       </div>
     </div>
     <div id="scan-preview" style="display:none">
@@ -203,31 +208,71 @@ function renderScan() {
     </div>
   `;
 
-  const fileInput = wrap.querySelector('#file-input');
+  const fileInputCamera = wrap.querySelector('#file-input-camera');
+  const fileInputGallery = wrap.querySelector('#file-input-gallery');
+  const fileInputPdf = wrap.querySelector('#file-input-pdf');
   const preview = wrap.querySelector('#scan-preview');
   const scanZone = wrap.querySelector('#scan-zone');
   const previewImg = wrap.querySelector('#preview-img');
 
-  const handleFile = (file) => {
+  const showPreview = (dataUrl) => {
+    state.pendingImage = dataUrl;
+    previewImg.src = dataUrl;
+    scanZone.style.display = 'none';
+    preview.style.display = 'block';
+  };
+
+  const handleImageFile = (file) => {
     const reader = new FileReader();
-    reader.onload = e => {
-      state.pendingImage = e.target.result;
-      previewImg.src = e.target.result;
-      scanZone.style.display = 'none';
-      preview.style.display = 'block';
-    };
+    reader.onload = e => showPreview(e.target.result);
     reader.readAsDataURL(file);
   };
 
-  wrap.querySelector('#btn-camera').onclick = () => {
-    fileInput.setAttribute('capture', 'environment');
-    fileInput.click();
+  const handlePdfFile = async (file) => {
+    // Render first page of PDF to canvas using PDF.js
+    const status = wrap.querySelector('#extract-status') || document.createElement('div');
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdfjsLib = window['pdfjs-dist/build/pdf'];
+      if (!pdfjsLib) {
+        // Fallback: read as dataURL and send directly
+        const reader = new FileReader();
+        reader.onload = e => showPreview(e.target.result);
+        reader.readAsDataURL(file);
+        return;
+      }
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2.5 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      showPreview(canvas.toDataURL('image/jpeg', 0.92));
+    } catch (err) {
+      // Fallback: send PDF as-is
+      const reader = new FileReader();
+      reader.onload = e => showPreview(e.target.result);
+      reader.readAsDataURL(file);
+    }
   };
-  wrap.querySelector('#btn-gallery').onclick = () => {
-    fileInput.removeAttribute('capture');
-    fileInput.click();
+
+  wrap.querySelector('#btn-camera').onclick = () => fileInputCamera.click();
+  wrap.querySelector('#btn-gallery').onclick = () => fileInputGallery.click();
+  wrap.querySelector('#btn-pdf').onclick = () => fileInputPdf.click();
+
+  fileInputCamera.onchange = e => { if (e.target.files[0]) handleImageFile(e.target.files[0]); };
+  fileInputGallery.onchange = e => { if (e.target.files[0]) handleImageFile(e.target.files[0]); };
+  fileInputPdf.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.type === 'application/pdf') {
+      handlePdfFile(file);
+    } else {
+      handleImageFile(file);
+    }
   };
-  fileInput.onchange = e => { if (e.target.files[0]) handleFile(e.target.files[0]); };
 
   wrap.querySelector('#btn-retry').onclick = () => {
     state.pendingImage = null;
@@ -339,6 +384,15 @@ Si une valeur est illisible, mets 0 pour les nombres et "" pour les strings."`
 
     const clean = text.replace(/```json|```/g, '').trim();
     const extracted = JSON.parse(clean);
+    // Corrige l'année si elle semble incorrecte (ex: 2025 au lieu de 2026)
+    const currentYear = new Date().getFullYear();
+    if (extracted.date) {
+      const parts = extracted.date.split('-');
+      if (parts[0] && parseInt(parts[0]) < currentYear) {
+        parts[0] = currentYear.toString();
+        extracted.date = parts.join('-');
+      }
+    }
     state.pendingExtracted = extracted;
     render();
   } catch (err) {
@@ -559,7 +613,12 @@ function renderDetail() {
       <h1>Détail facture</h1>
     </div>
     ${f.image ? `<img src="${f.image}" class="preview-img-small">` : ''}
-    ${f.drive_url ? `<a href="${f.drive_url}" target="_blank" class="drive-link">📁 Voir dans Drive</a>` : ''}
+    ${f.drive_url 
+      ? `<a href="${f.drive_url}" target="_blank" class="drive-link">📁 Voir dans Drive</a>` 
+      : f.image 
+        ? `<button class="btn-secondary" id="btn-upload-drive" style="margin-bottom:1rem">☁️ Envoyer vers Drive</button>`
+        : ''
+    }
     <form id="edit-form" class="form">
       <div class="form-group">
         <label>Fournisseur</label>
@@ -617,6 +676,34 @@ function renderDetail() {
   `;
 
   wrap.querySelector('#btn-back').onclick = () => navigate('liste');
+
+  wrap.querySelector('#btn-upload-drive')?.addEventListener('click', async () => {
+    const btn = wrap.querySelector('#btn-upload-drive');
+    if (!isAuthed()) {
+      showToast('Connectez Google dans les réglages');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = '☁️ Upload en cours…';
+    try {
+      // Get current form values for folder structure
+      const fd = new FormData(wrap.querySelector('#edit-form'));
+      const factureData = {
+        date: fd.get('date') || f.date,
+        categorie: fd.get('categorie') || f.categorie,
+        fournisseur: fd.get('fournisseur') || f.fournisseur
+      };
+      const driveUrl = await uploadFactureImage(f.image, factureData);
+      await updateFacture(f.id, { drive_url: driveUrl });
+      state.factures = await getAllFactures();
+      showToast('Photo envoyée vers Drive !');
+      navigate('detail', { editingId: f.id });
+    } catch (err) {
+      showToast('Erreur Drive : ' + err.message);
+      btn.disabled = false;
+      btn.textContent = '☁️ Envoyer vers Drive';
+    }
+  });
 
   wrap.querySelector('#edit-form').onsubmit = async e => {
     e.preventDefault();
