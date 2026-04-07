@@ -60,7 +60,9 @@ async function driveUploadRequest(metadata, blob) {
 }
 
 async function findOrCreateFolder(name, parentId = null) {
-  const q = [`name='${name}'`, `mimeType='application/vnd.google-apps.folder'`, `trashed=false`];
+  // Escape single quotes in name for Drive query (replace ' with \')
+  const safeName = name.replace(/'/g, "\\'");
+  const q = [`name='${safeName}'`, `mimeType='application/vnd.google-apps.folder'`, `trashed=false`];
   if (parentId) q.push(`'${parentId}' in parents`);
   const { files } = await driveRequest(`files?q=${encodeURIComponent(q.join(' and '))}&fields=files(id,name)`);
   if (files.length > 0) return files[0].id;
@@ -85,7 +87,8 @@ export async function uploadFactureImage(imageDataUrl, facture) {
   const moisNoms = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
   const moisNom = moisNoms[date.getMonth()];
   const moisLabel = `${moisNum} - ${moisNom}`;
-  const categorie = facture.categorie || 'Autre';
+  // Nettoie le nom de catégorie pour Drive (remplace / par -)
+  const categorie = (facture.categorie || 'Autre').replace(/\s*\/\s*/g, ' - ');
 
   const rootId = await findOrCreateFolder('Factures');
   const anneeId = await findOrCreateFolder(annee, rootId);
