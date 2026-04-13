@@ -109,7 +109,7 @@ export async function uploadFactureImage(imageDataUrl, facture) {
 }
 
 // ── Google Sheets export ──────────────────────────────────────────────────────
-export async function exportToSheets(factures, sheetId = null) {
+export async function exportToSheets(factures, sheetId = null, toutesFactures = null) {
   if (!accessToken) throw new Error('Non authentifié Google');
 
   let id = sheetId;
@@ -123,7 +123,8 @@ export async function exportToSheets(factures, sheetId = null) {
         properties: { title: `Factures BPT ${annee}` },
         sheets: [
           { properties: { title: 'Factures', sheetId: 0 } },
-          { properties: { title: 'Réconciliation', sheetId: 1 } }
+          { properties: { title: 'Réconciliation', sheetId: 1 } },
+          { properties: { title: 'Année complète', sheetId: 2 } }
         ]
       })
     }, true);
@@ -179,6 +180,34 @@ export async function exportToSheets(factures, sheetId = null) {
 
 
 
+  // ── Onglet 3 : Année complète ────────────────────────────────────────────────
+  const facturesAnnee = toutesFactures || factures;
+  const anneeEnCours = new Date().getFullYear();
+  const facturesFiltrees = facturesAnnee.filter(f => f.date && new Date(f.date).getFullYear() === anneeEnCours);
+  facturesFiltrees.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  const headerA = [['Date','Fournisseur','Montant total','S-Total','TPS réelle','TVQ réelle','Pourboire','Catégorie','Type dépense','Tags','Notes','Lien Drive']];
+  const rowsA = facturesFiltrees.map(f => [
+    f.date || '',
+    f.fournisseur || '',
+    f.total || 0,
+    f.sous_total || 0,
+    f.tps || 0,
+    f.tvq || 0,
+    f.pourboire || 0,
+    f.categorie || '',
+    f.type_depense || '',
+    (f.tags || []).join(', '),
+    f.notes || '',
+    f.drive_url || ''
+  ]);
+
+  await sheetsRequest(`/${id}/values/Ann%C3%A9e%20compl%C3%A8te!A1:L${1 + rowsA.length}:clear`, { method: 'POST' });
+  await sheetsRequest(`/${id}/values/Ann%C3%A9e%20compl%C3%A8te!A1:L${1 + rowsA.length}?valueInputOption=RAW`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [...headerA, ...rowsA] })
+  });
+
   // ── Formatage des deux onglets ─────────────────────────────────────────────
   await sheetsRequest(`/${id}:batchUpdate`, {
     method: 'POST',
@@ -221,6 +250,19 @@ export async function exportToSheets(factures, sheetId = null) {
         { autoResizeDimensions: { dimensions: { sheetId: 0, dimension: 'COLUMNS', startIndex: 0, endIndex: 12 } } },
         // Auto-resize all columns — Réconciliation
         { autoResizeDimensions: { dimensions: { sheetId: 1, dimension: 'COLUMNS', startIndex: 0, endIndex: 10 } } },
+        // En-tête Année complète — fond bleu foncé, texte blanc, gras
+        {
+          repeatCell: {
+            range: { sheetId: 2, startRowIndex: 0, endRowIndex: 1 },
+            cell: { userEnteredFormat: {
+              textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+              backgroundColor: { red: 0.13, green: 0.29, blue: 0.53 }
+            }},
+            fields: 'userEnteredFormat(textFormat,backgroundColor)'
+          }
+        },
+        { updateSheetProperties: { properties: { sheetId: 2, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+        { autoResizeDimensions: { dimensions: { sheetId: 2, dimension: 'COLUMNS', startIndex: 0, endIndex: 12 } } },
         // Vraies cases à cocher natives colonne I (Réconcilié)
         {
           repeatCell: {
