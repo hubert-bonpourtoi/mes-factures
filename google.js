@@ -177,21 +177,7 @@ export async function exportToSheets(factures, sheetId = null) {
     body: JSON.stringify({ values: [...headerR, ...rowsR] })
   });
 
-  // Add real checkboxes to column I (Réconcilié)
-  if (rowsR.length > 0) {
-    await sheetsRequest(`/${id}:batchUpdate`, {
-      method: 'POST',
-      body: JSON.stringify({
-        requests: [{
-          repeatCell: {
-            range: { sheetId: 1, startRowIndex: 1, endRowIndex: 1 + rowsR.length, startColumnIndex: 8, endColumnIndex: 9 },
-            cell: { dataValidation: { condition: { type: 'BOOLEAN' }, showCustomUi: true } },
-            fields: 'dataValidation'
-          }
-        }]
-      })
-    });
-  }
+
 
   // ── Formatage des deux onglets ─────────────────────────────────────────────
   await sheetsRequest(`/${id}:batchUpdate`, {
@@ -234,7 +220,18 @@ export async function exportToSheets(factures, sheetId = null) {
         // Auto-resize all columns — Factures
         { autoResizeDimensions: { dimensions: { sheetId: 0, dimension: 'COLUMNS', startIndex: 0, endIndex: 12 } } },
         // Auto-resize all columns — Réconciliation
-        { autoResizeDimensions: { dimensions: { sheetId: 1, dimension: 'COLUMNS', startIndex: 0, endIndex: 10 } } }
+        { autoResizeDimensions: { dimensions: { sheetId: 1, dimension: 'COLUMNS', startIndex: 0, endIndex: 10 } } },
+        // Vraies cases à cocher natives colonne I (Réconcilié)
+        {
+          repeatCell: {
+            range: { sheetId: 1, startRowIndex: 1, endRowIndex: 500, startColumnIndex: 8, endColumnIndex: 9 },
+            cell: {
+              dataValidation: { condition: { type: 'BOOLEAN' }, showCustomUi: true },
+              userEnteredValue: { boolValue: false }
+            },
+            fields: 'dataValidation,userEnteredValue'
+          }
+        }
       ]
     })
   });
