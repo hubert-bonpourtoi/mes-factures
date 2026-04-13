@@ -164,7 +164,7 @@ export async function exportToSheets(factures, sheetId = null) {
     f.pourboire || 0,
     f.categorie || '',
     f.drive_url ? `=HYPERLINK("${f.drive_url}","📄 Voir")` : '',
-    '☐',
+    true,  // checkbox
     f.notes || ''
   ]);
 
@@ -176,6 +176,22 @@ export async function exportToSheets(factures, sheetId = null) {
     method: 'PUT',
     body: JSON.stringify({ values: [...headerR, ...rowsR] })
   });
+
+  // Add real checkboxes to column I (Réconcilié)
+  if (rowsR.length > 0) {
+    await sheetsRequest(`/${id}:batchUpdate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        requests: [{
+          repeatCell: {
+            range: { sheetId: 1, startRowIndex: 1, endRowIndex: 1 + rowsR.length, startColumnIndex: 8, endColumnIndex: 9 },
+            cell: { dataValidation: { condition: { type: 'BOOLEAN' }, showCustomUi: true } },
+            fields: 'dataValidation'
+          }
+        }]
+      })
+    });
+  }
 
   // ── Formatage des deux onglets ─────────────────────────────────────────────
   await sheetsRequest(`/${id}:batchUpdate`, {
