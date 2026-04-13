@@ -440,6 +440,29 @@ function renderScanForm(wrap) {
         <input type="number" name="total" value="${f.total || 0}" step="0.01" min="0" required>
       </div>
       <div class="form-group">
+        <div class="toggle-row">
+          <label class="toggle-label">Devise étrangère</label>
+          <label class="toggle-switch">
+            <input type="checkbox" name="devise_etrangere" id="toggle-devise" ${f.devise_etrangere ? 'checked' : ''}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+      <div id="devise-fields" style="display:${f.devise_etrangere ? 'flex' : 'none'}; flex-direction:column; gap:1rem">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Devise</label>
+            <select name="devise">
+              ${['USD','EUR','GBP','CHF','JPY','AUD','MXN','CNY'].map(d => `<option value="${d}" ${f.devise === d ? 'selected' : ''}>${d}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group" style="grid-column: span 2">
+            <label>Montant en devise étrangère</label>
+            <input type="number" name="montant_devise" value="${f.montant_devise || 0}" step="0.01" min="0">
+          </div>
+        </div>
+      </div>
+      <div class="form-group">
         <label>Catégorie</label>
         <select name="categorie" id="sel-categorie">
           ${CATEGORIES.map(c => `<option value="${c}" ${c === f.categorie ? 'selected' : ''}>${c}</option>`).join('')}
@@ -478,6 +501,19 @@ function renderScanForm(wrap) {
     if (pg) pg.style.display = e.target.value === "Restaurant / repas d'affaires" ? 'flex' : 'none';
   });
 
+  // Toggle devise étrangère
+  wrap.querySelector('#toggle-devise')?.addEventListener('change', e => {
+    const df = wrap.querySelector('#devise-fields');
+    if (df) df.style.display = e.target.checked ? 'flex' : 'none';
+    if (e.target.checked) {
+      // Met TPS et TVQ à 0
+      const tpsInput = wrap.querySelector('input[name="tps"]');
+      const tvqInput = wrap.querySelector('input[name="tvq"]');
+      if (tpsInput) tpsInput.value = 0;
+      if (tvqInput) tvqInput.value = 0;
+    }
+  });
+
   wrap.querySelector('#btn-cancel').onclick = () => {
     state.pendingImage = null;
     state.pendingExtracted = null;
@@ -501,6 +537,9 @@ function renderScanForm(wrap) {
       categorie: fd.get('categorie'),
       type_depense: fd.get('type_depense'),
       pourboire: parseFloat(fd.get('pourboire')) || 0,
+      devise_etrangere: fd.get('devise_etrangere') === 'on',
+      devise: fd.get('devise') || null,
+      montant_devise: parseFloat(fd.get('montant_devise')) || 0,
       tags: fd.get('tags').split(',').map(t => t.trim()).filter(Boolean),
       notes: fd.get('notes'),
       image: state.pendingImage || null,
@@ -508,11 +547,24 @@ function renderScanForm(wrap) {
       annee_mois: fd.get('date').substring(0, 7)
     };
 
-    // Upload Drive si connecté
-    if (isAuthed() && state.pendingImage) {
+    // Upload Drive — demande l'auth si nécessaire et réessaie
+    if (state.pendingImage && state.googleClientId) {
       try {
         btn.textContent = '☁️ Upload Drive…';
-        facture.drive_url = await uploadFactureImage(state.pendingImage, facture);
+        if (!isAuthed()) {
+          // Demande l'auth et attend max 15 secondes
+          await new Promise((resolve) => {
+            requestGoogleAuth();
+            const timeout = setTimeout(resolve, 15000);
+            window.addEventListener('google-authed', () => {
+              clearTimeout(timeout);
+              resolve();
+            }, { once: true });
+          });
+        }
+        if (isAuthed()) {
+          facture.drive_url = await uploadFactureImage(state.pendingImage, facture);
+        }
       } catch (err) {
         console.warn('Drive upload échoué:', err);
       }
@@ -830,6 +882,7 @@ function renderRapport() {
 
     <div class="form-actions" style="margin-top:1.5rem">
       <button class="btn-primary" id="btn-export-sheets">📊 Exporter vers Google Sheets</button>
+      <button class="btn-secondary" id="btn-upload-all-drive">☁️ Tout uploader vers Drive</button>
       <button class="btn-secondary" id="btn-export-csv">⬇ Télécharger CSV</button>
     </div>
     <div id="export-status"></div>
@@ -848,6 +901,63 @@ function renderRapport() {
   };
 
   wrap.querySelector('#btn-export-csv').onclick = () => exportCSV(filtered);
+
+  wrap.querySelector('#btn-upload-all-drive').onclick = async () => {
+    const status = wrap.querySelector('#export-status');
+    const btn = wrap.querySelector('#btn-upload-all-drive');
+
+    if (!state.googleClientId) {
+      status.innerHTML = '<div class="alert alert-warn">Configurez votre Google Client ID dans les réglages.</div>';
+      return;
+    }
+
+    // Auth si nécessaire
+    if (!isAuthed()) {
+      requestGoogleAuth();
+      status.innerHTML = '<div class="muted">Authentification Google en cours…</div>';
+      await new Promise((resolve) => {
+        const timeout = setTimeout(resolve, 15000);
+        window.addEventListener('google-authed', () => { clearTimeout(timeout); resolve(); }, { once: true });
+      });
+    }
+
+    if (!isAuthed()) {
+      status.innerHTML = '<div class="alert alert-error">Authentification échouée. Réessayez.</div>';
+      return;
+    }
+
+    // Trouve toutes les factures sans Drive URL qui ont une image
+    const sansDrive = state.factures.filter(f => !f.drive_url && f.image);
+    if (sansDrive.length === 0) {
+      status.innerHTML = '<div class="alert alert-ok">✅ Toutes les factures sont déjà dans Drive !</div>';
+      return;
+    }
+
+    btn.disabled = true;
+    let ok = 0;
+    let erreurs = 0;
+
+    for (const f of sansDrive) {
+      status.innerHTML = `<div class="spinner-wrap"><div class="spinner"></div> Upload ${ok + erreurs + 1} / ${sansDrive.length} — ${f.fournisseur || ''}…</div>`;
+      try {
+        const driveUrl = await uploadFactureImage(f.image, f);
+        await updateFacture(f.id, { drive_url: driveUrl });
+        ok++;
+      } catch (err) {
+        console.warn('Erreur upload', f.id, err);
+        erreurs++;
+      }
+    }
+
+    state.factures = await getAllFactures();
+    btn.disabled = false;
+
+    if (erreurs === 0) {
+      status.innerHTML = `<div class="alert alert-ok">✅ ${ok} photo${ok > 1 ? 's' : ''} uploadée${ok > 1 ? 's' : ''} dans Drive !</div>`;
+    } else {
+      status.innerHTML = `<div class="alert alert-warn">⚠️ ${ok} réussies, ${erreurs} échouées. Réessayez pour les manquantes.</div>`;
+    }
+  };
 
   wrap.querySelector('#btn-export-sheets').onclick = async () => {
     const status = wrap.querySelector('#export-status');
