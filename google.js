@@ -7,6 +7,13 @@ const SCOPES = [
 
 let tokenClient = null;
 let accessToken = null;
+let tokenExpiry = null;
+
+function isTokenValid() {
+  if (!accessToken) return false;
+  if (!tokenExpiry) return true;
+  return Date.now() < tokenExpiry - 60000; // 1 minute de marge
+}
 
 // ── Init Google Identity Services ────────────────────────────────────────────
 export function initGoogle(clientId) {
@@ -18,6 +25,8 @@ export function initGoogle(clientId) {
       callback: (resp) => {
         if (resp.access_token) {
           accessToken = resp.access_token;
+          // Les tokens Google durent 1 heure
+          tokenExpiry = Date.now() + (resp.expires_in ? resp.expires_in * 1000 : 3600000);
           window.dispatchEvent(new CustomEvent('google-authed'));
         }
       }
@@ -31,7 +40,7 @@ export function requestGoogleAuth() {
   tokenClient.requestAccessToken();
 }
 
-export function isAuthed() { return !!accessToken; }
+export function isAuthed() { return isTokenValid(); }
 
 // ── Drive helpers ─────────────────────────────────────────────────────────────
 async function driveRequest(path, options = {}) {
@@ -132,7 +141,7 @@ export async function exportToSheets(factures, sheetId = null, toutesFactures = 
   }
 
   // ── Onglet 1 : Factures (même structure que Excel) ───────────────────────
-  const headerF = [['Date','Fournisseur','Montant total','S-Total','TPS réelle','TVQ réelle','Pourboire','Catégorie','Type dépense','Tags','Notes','Lien Drive']];
+  const headerF = [['Date','Fournisseur','Montant total','S-Total','TPS réelle','TVQ réelle','Pourboire','Devise étrangère','Montant devise','Catégorie','Type dépense','Tags','Notes','Lien Drive']];
   const rowsF = factures.map(f => [
     f.date || '',
     f.fournisseur || '',
@@ -141,6 +150,8 @@ export async function exportToSheets(factures, sheetId = null, toutesFactures = 
     f.tps || 0,
     f.tvq || 0,
     f.pourboire || 0,
+    f.devise_etrangere ? (f.devise || 'USD') : '',
+    f.montant_devise || '',
     f.categorie || '',
     f.type_depense || '',
     (f.tags || []).join(', '),
@@ -148,8 +159,8 @@ export async function exportToSheets(factures, sheetId = null, toutesFactures = 
     f.drive_url || ''
   ]);
 
-  await sheetsRequest(`/${id}/values/Factures!A1:L${1 + rowsF.length}:clear`, { method: 'POST' });
-  await sheetsRequest(`/${id}/values/Factures!A1:L${1 + rowsF.length}?valueInputOption=RAW`, {
+  await sheetsRequest(`/${id}/values/Factures!A1:N${1 + rowsF.length}:clear`, { method: 'POST' });
+  await sheetsRequest(`/${id}/values/Factures!A1:N${1 + rowsF.length}?valueInputOption=RAW`, {
     method: 'PUT',
     body: JSON.stringify({ values: [...headerF, ...rowsF] })
   });
@@ -247,7 +258,7 @@ export async function exportToSheets(factures, sheetId = null, toutesFactures = 
         { updateSheetProperties: { properties: { sheetId: 0, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
         { updateSheetProperties: { properties: { sheetId: 1, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
         // Auto-resize all columns — Factures
-        { autoResizeDimensions: { dimensions: { sheetId: 0, dimension: 'COLUMNS', startIndex: 0, endIndex: 12 } } },
+        { autoResizeDimensions: { dimensions: { sheetId: 0, dimension: 'COLUMNS', startIndex: 0, endIndex: 14 } } },
         // Auto-resize all columns — Réconciliation
         { autoResizeDimensions: { dimensions: { sheetId: 1, dimension: 'COLUMNS', startIndex: 0, endIndex: 10 } } },
         // En-tête Année complète — fond bleu foncé, texte blanc, gras
