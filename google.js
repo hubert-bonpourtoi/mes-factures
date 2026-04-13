@@ -113,52 +113,113 @@ export async function exportToSheets(factures, sheetId = null) {
   if (!accessToken) throw new Error('Non authentifié Google');
 
   let id = sheetId;
+  const annee = new Date().getFullYear();
 
   if (!id) {
-    // Create new spreadsheet
+    // Create new spreadsheet with 2 sheets
     const { spreadsheetId } = await sheetsRequest('', {
       method: 'POST',
       body: JSON.stringify({
-        properties: { title: `Rapport TPS-TVQ ${new Date().getFullYear()}` },
-        sheets: [{ properties: { title: 'Factures' } }]
+        properties: { title: `Factures BPT ${annee}` },
+        sheets: [
+          { properties: { title: 'Factures', sheetId: 0 } },
+          { properties: { title: 'Réconciliation', sheetId: 1 } }
+        ]
       })
     }, true);
     id = spreadsheetId;
   }
 
-  // Build rows
-  const header = [['Date','Fournisseur','Catégorie','Tags','Sous-total','TPS','TVQ','Total','Type dépense','Notes','Drive URL']];
-  const rows = factures.map(f => [
+  // ── Onglet 1 : Factures (même structure que Excel) ───────────────────────
+  const headerF = [['Date','Fournisseur','Montant total','S-Total','TPS réelle','TVQ réelle','Pourboire','Catégorie','Type dépense','Tags','Notes','Lien Drive']];
+  const rowsF = factures.map(f => [
     f.date || '',
     f.fournisseur || '',
-    f.categorie || '',
-    (f.tags || []).join(', '),
+    f.total || 0,
     f.sous_total || 0,
     f.tps || 0,
     f.tvq || 0,
-    f.total || 0,
+    f.pourboire || 0,
+    f.categorie || '',
     f.type_depense || '',
+    (f.tags || []).join(', '),
     f.notes || '',
     f.drive_url || ''
   ]);
 
-  await sheetsRequest(`/${id}/values/Factures!A1:K${1 + rows.length}:clear`, { method: 'POST' });
-  await sheetsRequest(`/${id}/values/Factures!A1:K${1 + rows.length}?valueInputOption=RAW`, {
+  await sheetsRequest(`/${id}/values/Factures!A1:L${1 + rowsF.length}:clear`, { method: 'POST' });
+  await sheetsRequest(`/${id}/values/Factures!A1:L${1 + rowsF.length}?valueInputOption=RAW`, {
     method: 'PUT',
-    body: JSON.stringify({ values: [...header, ...rows] })
+    body: JSON.stringify({ values: [...headerF, ...rowsF] })
   });
 
-  // Format header row (bold)
+  // ── Onglet 2 : Réconciliation ─────────────────────────────────────────────
+  const headerR = [['Montant relevé CC','Fournisseur facture','Date facture','TPS réelle','TVQ réelle','Pourboire','Catégorie','Drive','Réconcilié ?','Notes']];
+  const rowsR = factures.map(f => [
+    f.total || 0,
+    f.fournisseur || '',
+    f.date || '',
+    f.tps || 0,
+    f.tvq || 0,
+    f.pourboire || 0,
+    f.categorie || '',
+    f.drive_url ? `=HYPERLINK("${f.drive_url}","📄 Voir")` : '',
+    '☐',
+    f.notes || ''
+  ]);
+
+  // Sort by total amount for easier lookup
+  rowsR.sort((a, b) => b[0] - a[0]);
+
+  await sheetsRequest(`/${id}/values/R%C3%A9conciliation!A1:J${1 + rowsR.length}:clear`, { method: 'POST' });
+  await sheetsRequest(`/${id}/values/R%C3%A9conciliation!A1:J${1 + rowsR.length}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    body: JSON.stringify({ values: [...headerR, ...rowsR] })
+  });
+
+  // ── Formatage des deux onglets ─────────────────────────────────────────────
   await sheetsRequest(`/${id}:batchUpdate`, {
     method: 'POST',
     body: JSON.stringify({
-      requests: [{
-        repeatCell: {
-          range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1 },
-          cell: { userEnteredFormat: { textFormat: { bold: true }, backgroundColor: { red: 0.06, green: 0.06, blue: 0.06 } } },
-          fields: 'userEnteredFormat(textFormat,backgroundColor)'
-        }
-      }]
+      requests: [
+        // En-tête Factures — fond foncé, texte blanc, gras
+        {
+          repeatCell: {
+            range: { sheetId: 0, startRowIndex: 0, endRowIndex: 1 },
+            cell: { userEnteredFormat: {
+              textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+              backgroundColor: { red: 0.06, green: 0.06, blue: 0.06 }
+            }},
+            fields: 'userEnteredFormat(textFormat,backgroundColor)'
+          }
+        },
+        // En-tête Réconciliation — fond vert, texte blanc, gras
+        {
+          repeatCell: {
+            range: { sheetId: 1, startRowIndex: 0, endRowIndex: 1 },
+            cell: { userEnteredFormat: {
+              textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } },
+              backgroundColor: { red: 0.12, green: 0.45, blue: 0.29 }
+            }},
+            fields: 'userEnteredFormat(textFormat,backgroundColor)'
+          }
+        },
+        // Colonne montant Réconciliation — format monétaire
+        {
+          repeatCell: {
+            range: { sheetId: 1, startRowIndex: 1, endRowIndex: 1 + rowsR.length, startColumnIndex: 0, endColumnIndex: 1 },
+            cell: { userEnteredFormat: { numberFormat: { type: 'CURRENCY', pattern: '"$"#,##0.00' } } },
+            fields: 'userEnteredFormat.numberFormat'
+          }
+        },
+        // Freeze row 1 on both sheets
+        { updateSheetProperties: { properties: { sheetId: 0, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+        { updateSheetProperties: { properties: { sheetId: 1, gridProperties: { frozenRowCount: 1 } }, fields: 'gridProperties.frozenRowCount' } },
+        // Auto-resize all columns — Factures
+        { autoResizeDimensions: { dimensions: { sheetId: 0, dimension: 'COLUMNS', startIndex: 0, endIndex: 12 } } },
+        // Auto-resize all columns — Réconciliation
+        { autoResizeDimensions: { dimensions: { sheetId: 1, dimension: 'COLUMNS', startIndex: 0, endIndex: 10 } } }
+      ]
     })
   });
 
