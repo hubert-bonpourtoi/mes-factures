@@ -815,7 +815,7 @@ function renderRapport() {
     </div>
 
     <div class="form-actions" style="margin-top:1.5rem">
-      <button class="btn-primary" id="btn-export-sheets">📊 Exporter vers Google Sheets</button>
+      <button class="btn-primary" id="btn-export-sheets">📊 Exporter vers Google Sheets (2 onglets)</button>
       <button class="btn-secondary" id="btn-export-csv">⬇ Télécharger CSV</button>
     </div>
     <div id="export-status"></div>
@@ -839,12 +839,11 @@ function renderRapport() {
     }
     try {
       status.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div> Export en cours…</div>';
-      const url = await exportToSheets(filtered, state.sheetId);
-      if (!state.sheetId) {
-        const id = url.split('/d/')[1].split('/')[0];
-        state.sheetId = id;
-        await saveSetting('sheet_id', id);
-      }
+      // Toujours créer un nouveau fichier à chaque export
+      const url = await exportToSheets(filtered, null);
+      const id = url.split('/d/')[1].split('/')[0];
+      state.sheetId = id;
+      await saveSetting('sheet_id', id);
       status.innerHTML = `<div class="alert alert-ok">✅ Exporté ! <a href="${url}" target="_blank">Ouvrir le fichier</a></div>`;
     } catch (err) {
       status.innerHTML = `<div class="alert alert-error">Erreur : ${err.message}</div>`;
