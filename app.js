@@ -776,7 +776,10 @@ function renderRapport() {
     <div class="page-header"><h1>Rapport taxes</h1></div>
     <div class="filters">
       <select id="r-annee">
-        ${annees.map(a => `<option value="${a}" ${a === selectedAnnee ? 'selected' : ''}>${a}</option>`).join('')}
+        ${annees.length === 0 
+          ? `<option value="${new Date().getFullYear()}" selected>${new Date().getFullYear()}</option>`
+          : annees.map(a => `<option value="${a}" ${a === selectedAnnee ? 'selected' : ''}>${a}</option>`).join('')
+        }
       </select>
       <select id="r-trimestre">
         <option value="" ${!state.filterTrimestre ? 'selected' : ''}>Toute l'année</option>
@@ -826,7 +829,7 @@ function renderRapport() {
     </div>
 
     <div class="form-actions" style="margin-top:1.5rem">
-      <button class="btn-primary" id="btn-export-sheets">📊 Exporter vers Google Sheets (2 onglets)</button>
+      <button class="btn-primary" id="btn-export-sheets">📊 Exporter vers Google Sheets</button>
       <button class="btn-secondary" id="btn-export-csv">⬇ Télécharger CSV</button>
     </div>
     <div id="export-status"></div>
