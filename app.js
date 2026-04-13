@@ -839,11 +839,13 @@ function renderRapport() {
     }
     try {
       status.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div> Export en cours…</div>';
-      // Toujours créer un nouveau fichier à chaque export
-      const url = await exportToSheets(filtered, null);
+      // Réutilise le même fichier Sheets, le recrée seulement si absent
+      const url = await exportToSheets(filtered, state.sheetId);
       const id = url.split('/d/')[1].split('/')[0];
-      state.sheetId = id;
-      await saveSetting('sheet_id', id);
+      if (!state.sheetId) {
+        state.sheetId = id;
+        await saveSetting('sheet_id', id);
+      }
       status.innerHTML = `<div class="alert alert-ok">✅ Exporté ! <a href="${url}" target="_blank">Ouvrir le fichier</a></div>`;
     } catch (err) {
       status.innerHTML = `<div class="alert alert-error">Erreur : ${err.message}</div>`;
