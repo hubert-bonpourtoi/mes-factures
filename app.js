@@ -10,6 +10,7 @@ let state = {
   editingId: null,
   filterAnnee: new Date().getFullYear(),
   filterMois: null,
+  filterTrimestre: null,
   filterCat: null,
   filterTag: null,
   sheetId: null,
@@ -745,9 +746,12 @@ function renderRapport() {
   const selectedAnnee = state.filterAnnee || new Date().getFullYear();
   const selectedMois = state.filterMois;
 
+  const TRIMESTRES = { 1: [1,2,3], 2: [4,5,6], 3: [7,8,9], 4: [10,11,12] };
+
   let filtered = state.factures.filter(f => {
     const d = new Date(f.date);
     if (d.getFullYear() !== selectedAnnee) return false;
+    if (state.filterTrimestre && !TRIMESTRES[state.filterTrimestre].includes(d.getMonth() + 1)) return false;
     if (selectedMois && (d.getMonth() + 1) !== selectedMois) return false;
     return true;
   });
@@ -774,8 +778,15 @@ function renderRapport() {
       <select id="r-annee">
         ${annees.map(a => `<option value="${a}" ${a === selectedAnnee ? 'selected' : ''}>${a}</option>`).join('')}
       </select>
+      <select id="r-trimestre">
+        <option value="" ${!state.filterTrimestre ? 'selected' : ''}>Toute l'année</option>
+        <option value="1" ${state.filterTrimestre === 1 ? 'selected' : ''}>T1 — Jan · Fév · Mar</option>
+        <option value="2" ${state.filterTrimestre === 2 ? 'selected' : ''}>T2 — Avr · Mai · Jun</option>
+        <option value="3" ${state.filterTrimestre === 3 ? 'selected' : ''}>T3 — Jul · Aoû · Sep</option>
+        <option value="4" ${state.filterTrimestre === 4 ? 'selected' : ''}>T4 — Oct · Nov · Déc</option>
+      </select>
       <select id="r-mois">
-        <option value="">Toute l'année</option>
+        <option value="" ${!selectedMois ? 'selected' : ''}>Tous les mois</option>
         ${MOIS_NOMS.map((m, i) => `<option value="${i+1}" ${selectedMois === (i+1) ? 'selected' : ''}>${m}</option>`).join('')}
       </select>
     </div>
@@ -822,7 +833,16 @@ function renderRapport() {
   `;
 
   wrap.querySelector('#r-annee').onchange = e => { state.filterAnnee = parseInt(e.target.value); render(); };
-  wrap.querySelector('#r-mois').onchange = e => { state.filterMois = e.target.value ? parseInt(e.target.value) : null; render(); };
+  wrap.querySelector('#r-trimestre').onchange = e => {
+    state.filterTrimestre = e.target.value ? parseInt(e.target.value) : null;
+    state.filterMois = null;
+    render();
+  };
+  wrap.querySelector('#r-mois').onchange = e => {
+    state.filterMois = e.target.value ? parseInt(e.target.value) : null;
+    state.filterTrimestre = null;
+    render();
+  };
 
   wrap.querySelector('#btn-export-csv').onclick = () => exportCSV(filtered);
 
@@ -840,7 +860,7 @@ function renderRapport() {
     try {
       status.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div> Export en cours…</div>';
       // Réutilise le même fichier Sheets, le recrée seulement si absent
-      const url = await exportToSheets(filtered, state.sheetId);
+      const url = await exportToSheets(filtered, state.sheetId, state.factures);
       const id = url.split('/d/')[1].split('/')[0];
       if (!state.sheetId) {
         state.sheetId = id;
